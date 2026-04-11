@@ -31,15 +31,21 @@ app.get(
   '/ws',
   upgradeWebSocket((c) => ({
     onOpen: (evt, ws) => {
-      webSockets.add(ws)
       console.log('open web sockets:', webSockets.size)
     },
-    onMessage: () => {
-      console.log('message')
+    onMessage: (evt, ws) => {
+      const meta = JSON.parse(evt.data)
+      webSockets.add({ws, meta})
+      
+      console.log('registered socket:', meta)
     },
     onClose: (evt, ws) => {
-      console.log('close')
-      webSockets.delete(ws)
+      for (const entry of webSockets) {
+        if (entry.ws === ws) {
+          webSockets.delete(entry)
+          break
+        }
+      }
     },
   })),
 )
@@ -83,7 +89,6 @@ app.post('/add-todo', async (c) => {
   })
 
   sendTodosToAllWebsockets()
-
   return c.redirect('/')
 })
 
@@ -92,7 +97,7 @@ app.get('/remove-todo/:id', async (c) => {
 
   await db.delete(todosTable).where(eq(todosTable.id, id))
 
-  sendTodosToAllWebsockets()
+  sendTodosToAllWebsockets("destructive", id)
 
   return c.redirect('/')
 })
@@ -104,41 +109,66 @@ app.get('/toggle-todo/:id', async (c) => {
 
   await db.update(todosTable).set({ done: !todo.done }).where(eq(todosTable.id, id))
 
-  sendTodosToAllWebsockets()
-
+  sendTodosToAllWebsockets("update", id)
   return redirectBack(c, '/')
 })
 
-const sendTodosToAllWebsockets = async () => {
+// const sendTodosToAllWebsockets = async () => {
+//   try {
+//     const todos = await db.select().from(todosTable).all()
+
+//     const html = await ejs.renderFile('views/_todos.html', {
+//       todos,
+//       utils,
+//     })
+
+//     for (const webSocket of webSockets) {
+//       webSocket.send(
+//         JSON.stringify({
+//           type: 'todos',
+//           html,
+//         }),
+//       )
+//     }
+//   } catch (e) {
+//     console.error(e)
+//   }
+// }
+
+const sendTodosToAllWebsockets = async (operation = "update", affectedTodoId = null) => {
   try {
     const todos = await db.select().from(todosTable).all()
 
-    const html = await ejs.renderFile('views/_todos.html', {
-      todos,
-      utils,
-    })
-
-    for (const webSocket of webSockets) {
-      webSocket.send(
-        JSON.stringify({
-          type: 'todos',
-          html,
-        }),
-      )
+    for (const {ws, meta} of webSockets) {
+      if (meta.page === "overview"){
+        const html = await ejs.renderFile('views/_todos.html', { todos, utils })
+        ws.send(JSON.stringify({ html }))
+      } else if (meta.page === "detail" && meta.todoId === affectedTodoId){
+        if(operation === "destructive"){
+          const html = await ejs.renderFile('views/_todo-deleted.detail.html')
+          ws.send(JSON.stringify({ html, operation }))
+        } else {
+          const todo = todos.find(t => t.id === meta.todoId)
+          const html = await ejs.renderFile('views/_todo.detail.html', { todo, utils })
+          ws.send(JSON.stringify({ html, todo, operation }))
+        }
+      }
     }
-  } catch (e) {
-    console.error(e)
+  } catch (error) {
+    console.error(error)
   }
 }
 
 app.post('/update-todo/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.formData()
+
   const title = body.get('title')
   const priority = body.get('priority')
 
   await db.update(todosTable).set({ title, priority }).where(eq(todosTable.id, id))
 
+  sendTodosToAllWebsockets("update", id)
   return redirectBack(c, '/')
 })
 

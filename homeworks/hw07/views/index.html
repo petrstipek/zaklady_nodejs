@@ -34,15 +34,12 @@
       const ws = new WebSocket('ws://localhost:3000/ws')
 
       ws.addEventListener('open', () => {
-        console.log('WS open')
-        ws.send('Hello, World!')
+        ws.send(JSON.stringify({page: "overview"}))
       })
 
       ws.addEventListener('message', (ev) => {
         const json = JSON.parse(ev.data)
-        if (json.type === 'todos') {
-          document.getElementById('todos').innerHTML = json.html
-        }
+        document.getElementById('todos').innerHTML = json.html
       })
     </script>
   </body>
